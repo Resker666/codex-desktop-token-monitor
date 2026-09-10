@@ -3,13 +3,22 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, appendFile, rm, rename } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { JsonlAccumulator, buildSnapshot, localDate, UsageStore } from '../usage.mjs';
+import { COUNTERS, JsonlAccumulator, buildSnapshot, localDate, UsageStore } from '../usage.mjs';
 
 const usage = (input, output = 10, cached = 0) => ({ input_tokens: input, cached_input_tokens: cached, output_tokens: output, reasoning_output_tokens: 2, total_tokens: input + output });
 const meta = (id, extra = {}) => ({ type: 'session_meta', timestamp: '2026-09-10T01:00:00Z', payload: { id, originator: 'Codex Desktop', timestamp: '2026-09-10T01:00:00Z', ...extra } });
 const event = (timestamp, total, last = total) => ({ type: 'event_msg', timestamp, payload: { type: 'token_count', info: { total_token_usage: total, last_token_usage: last } } });
 const parser = rows => { const result = new JsonlAccumulator(); result.feed(rows.map(row => JSON.stringify(row)).join('\n') + '\n'); return result; };
 const snapshot = records => buildSnapshot(records, { now: new Date('2026-09-10T08:00:00Z') });
+const context = (model, timestamp = '2026-09-10T01:59:00Z') => ({ type: 'turn_context', timestamp, payload: { model } });
+
+function assertModelSums(result) {
+  const buckets = [{ ...result.totals, models: result.models }, ...result.days, ...result.sessions,
+    ...result.sessions.flatMap(session => [...session.days, ...session.hours])];
+  for (const bucket of buckets) {
+    for (const key of COUNTERS) assert.equal(bucket.models.reduce((sum, model) => sum + model[key], 0), bucket[key], `${bucket.date || bucket.id || 'total'} ${key}`);
+  }
+}
 
 test('uses cumulative deltas and merges copies without repeating cached or reasoning subsets', () => {
   const rows = [meta('desktop'), event('2026-09-10T02:00:00Z', usage(100, 10, 50)), event('2026-09-10T02:01:00Z', usage(100, 10, 50)), event('2026-09-10T02:02:00Z', usage(250, 30, 80), usage(150, 20, 30))];
@@ -34,6 +43,84 @@ test('assigns increments to event local day across midnight', () => {
   assert.equal(result.today.total, 170);
   assert.equal(result.days.find(day => day.date === localDate(first)).total, 110);
   assert.equal(result.totals.total, 280);
+});
+
+test('attributes each request to its event model when a session changes models', () => {
+  const result = snapshot([parser([
+    meta('desktop'), context('model-a'),
+    event('2026-09-10T02:00:00Z', usage(100, 10, 40)),
+    context('model-b', '2026-09-10T02:01:00Z'),
+    event('2026-09-10T02:02:00Z', { ...usage(300, 40, 140), reasoning_output_tokens: 5 }, { ...usage(200, 30, 100), reasoning_output_tokens: 3 }),
+  ])]);
+  assert.deepEqual(result.models.map(({ model, total }) => [model, total]), [['model-a', 110], ['model-b', 230]]);
+  assert.equal(result.sessions[0].model, 'model-b');
+  assert.equal(result.models.find(model => model.model === 'model-b').cached, 100);
+  assertModelSums(result);
+});
+
+test('keeps early unknown calls and missing cumulative increments out of the latest model', () => {
+  const result = snapshot([parser([
+    meta('desktop'),
+    event('2026-09-10T02:00:00Z', usage(1000, 100, 300), usage(100, 10, 30)),
+    context('model-a', '2026-09-10T02:01:00Z'),
+    event('2026-09-10T02:02:00Z', { ...usage(1500, 150, 500), reasoning_output_tokens: 10 }, { ...usage(200, 20, 80), reasoning_output_tokens: 3 }),
+    context('model-b', '2026-09-10T02:03:00Z'),
+  ])]);
+  assert.deepEqual(result.models.map(({ model, total }) => [model, total]), [['', 1430], ['model-a', 220]]);
+  assert.equal(result.models.find(model => model.model === 'model-a').cached, 80);
+  assert.equal(result.sessions[0].model, 'model-b');
+  assertModelSums(result);
+});
+
+test('uses metadata model fallback only for known request usage in the first cumulative snapshot', () => {
+  const result = snapshot([parser([
+    meta('desktop', { model: 'metadata-model' }),
+    event('2026-09-10T02:00:00Z', usage(1000, 100, 300), usage(200, 20, 80)),
+    event('2026-09-10T02:01:00Z', usage(1500, 150, 500), null),
+  ])]);
+  assert.deepEqual(result.models.map(({ model, total }) => [model, total]), [['', 1430], ['metadata-model', 220]]);
+  assertModelSums(result);
+});
+
+test('retains full history and groups hours by the same local timezone as dates', () => {
+  const first = new Date(2026, 3, 9, 23, 59).toISOString();
+  const second = new Date(2026, 3, 10, 0, 1).toISOString();
+  const third = new Date(2026, 3, 10, 1, 0).toISOString();
+  const result = buildSnapshot([parser([
+    meta('desktop'), context('model-a', first), event(first, usage(100, 10)),
+    event(second, usage(250, 30), usage(150, 20)),
+    event(third, usage(300, 35), usage(50, 5)),
+  ])], { now: new Date(2026, 8, 10, 12) });
+  assert.equal(result.days.find(day => day.date === '2026-04-09').total, 110);
+  assert.equal(result.days.find(day => day.date === '2026-04-10').total, 225);
+  assert.deepEqual(result.sessions[0].hours.map(({ date, hour, total }) => [date, hour, total]), [
+    ['2026-04-09', 23, 110], ['2026-04-10', 0, 170], ['2026-04-10', 1, 55],
+  ]);
+  assert.equal(result.coverage.firstDate, '2026-04-09');
+  assert.equal(result.coverage.lastDate, '2026-04-10');
+  assert.equal(result.today.total, 0);
+  assertModelSums(result);
+});
+
+test('archive copies enrich unknown event models without counting the event twice in either scan order', () => {
+  const request = event('2026-09-10T02:00:00Z', usage(100, 10, 30));
+  const unknown = parser([meta('desktop'), request]);
+  const known = parser([meta('desktop'), context('model-a'), request]);
+  for (const records of [[unknown, known], [known, unknown]]) {
+    const result = snapshot(records);
+    assert.equal(result.totals.total, 110);
+    assert.deepEqual(result.models.map(({ model, total }) => [model, total]), [['model-a', 110]]);
+    assert.equal(result.sessions[0].files, 2);
+    assertModelSums(result);
+  }
+});
+
+test('empty coverage uses today without implying observed history', () => {
+  const result = snapshot([]);
+  assert.equal(result.coverage.firstDate, result.todayDate);
+  assert.equal(result.coverage.lastDate, result.todayDate);
+  assert.deepEqual(result.models, []);
+  assertModelSums(result);
 });
 
 test('child identity comes from first metadata and inherited parent usage is excluded', () => {

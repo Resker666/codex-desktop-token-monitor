@@ -9,6 +9,41 @@ export const emptyCounters = () => Object.fromEntries(COUNTERS.map(key => [key, 
 const add = (target, values) => { for (const key of COUNTERS) target[key] += values[key]; };
 const equal = (a, b) => a && b && COUNTERS.every(key => a[key] === b[key]);
 const isNumber = value => Number.isSafeInteger(value) && value >= 0;
+const hasUsage = value => COUNTERS.some(key => value[key] > 0);
+const modelValues = values => [...values.values()].sort((a, b) => a.model.localeCompare(b.model));
+
+function addModel(values, model, usage) {
+  if (!hasUsage(usage)) return;
+  if (!values.has(model)) values.set(model, { model, ...emptyCounters() });
+  add(values.get(model), usage);
+}
+
+function usageBucket(identity) {
+  return { ...identity, ...emptyCounters(), models: new Map() };
+}
+
+function addBucket(bucket, delta, models) {
+  add(bucket, delta);
+  for (const values of models) addModel(bucket.models, values.model, values);
+}
+
+const serializeBucket = bucket => ({ ...bucket, models: modelValues(bucket.models) });
+
+function attributedUsage(event, delta) {
+  const models = new Map();
+  const last = event.last;
+  // A cumulative increment may include unobserved calls made with earlier models.
+  const known = event.model && last && ['input', 'output', 'total'].every(key => last[key] <= delta[key]);
+  if (!known) {
+    addModel(models, '', delta);
+  } else {
+    const request = Object.fromEntries(COUNTERS.map(key => [key, Math.min(delta[key], last[key])]));
+    const remainder = Object.fromEntries(COUNTERS.map(key => [key, delta[key] - request[key]]));
+    addModel(models, event.model, request);
+    addModel(models, '', remainder);
+  }
+  return modelValues(models);
+}
 
 function counters(value) {
   if (!value || !isNumber(value.input_tokens) || !isNumber(value.output_tokens)) return null;
@@ -82,7 +117,7 @@ export class JsonlAccumulator {
     if (!Number.isFinite(Date.parse(timestamp))) { this.malformedLines += 1; return; }
     const total = counters(row.payload.info.total_token_usage);
     if (!total) { this.malformedLines += 1; return; }
-    this.events.push({ timestamp, total, last: counters(row.payload.info.last_token_usage), ordinal: row.ordinal ?? null });
+    this.events.push({ timestamp, total, last: counters(row.payload.info.last_token_usage), ordinal: row.ordinal ?? null, model: this.model || this.meta?.model || '' });
   }
 }
 
@@ -106,7 +141,11 @@ export function buildSnapshot(records, { now = new Date(), warnings = [], files 
       session.model = record.model;
       session.modelAt = record.modelAt;
     }
-    for (const event of record.events) session.events.set(eventKey(event), event);
+    for (const event of record.events) {
+      const key = eventKey(event);
+      const existing = session.events.get(key);
+      if (!existing || (!existing.model && event.model)) session.events.set(key, event);
+    }
   }
 
   const included = new Set([...sessionsById.values()].filter(session => session.originator === 'Codex Desktop').map(session => session.id));
@@ -124,18 +163,21 @@ export function buildSnapshot(records, { now = new Date(), warnings = [], files 
   const todayDate = localDate(now);
   const totals = emptyCounters();
   const today = emptyCounters();
+  const modelsByName = new Map();
   const daysByDate = new Map();
   for (let i = 29; i >= 0; i -= 1) {
     const date = new Date(now);
     date.setDate(date.getDate() - i);
     const key = localDate(date);
-    daysByDate.set(key, { date: key, ...emptyCounters() });
+    daysByDate.set(key, usageBucket({ date: key }));
   }
   const sessions = [];
   let resets = 0;
   let incompleteResets = 0;
   let inheritedEvents = 0;
   let ambiguousForks = 0;
+  let firstDate = null;
+  let lastDate = null;
 
   for (const id of included) {
     const source = sessionsById.get(id);
@@ -143,9 +185,11 @@ export function buildSnapshot(records, { now = new Date(), warnings = [], files 
     const result = {
       id, parentId: source.parentId, kind: source.kind, title: id.slice(0, 8),
       cwd: source.cwd, model: source.model || '', createdAt: source.createdAt,
-      updatedAt: source.createdAt, files: source.files, ...emptyCounters(), today: emptyCounters(), days: [],
+      updatedAt: source.createdAt, files: source.files, ...emptyCounters(), today: emptyCounters(), days: [], hours: [], models: [],
     };
     const sessionDays = new Map();
+    const sessionHours = new Map();
+    const sessionModels = new Map();
     let previous = null;
     let hasOwnEvent = false;
     const isFork = !!source.forkedFromId;
@@ -187,14 +231,30 @@ export function buildSnapshot(records, { now = new Date(), warnings = [], files 
       hasOwnEvent = true;
       result.updatedAt = event.timestamp;
       const date = localDate(event.timestamp);
-      if (!sessionDays.has(date)) sessionDays.set(date, { date, ...emptyCounters() });
-      add(sessionDays.get(date), delta);
+      const hour = new Date(event.timestamp).getHours();
+      const hourKey = `${date}:${hour}`;
+      const attributed = attributedUsage(event, delta);
+      if (!sessionDays.has(date)) sessionDays.set(date, usageBucket({ date }));
+      if (!sessionHours.has(hourKey)) sessionHours.set(hourKey, usageBucket({ date, hour }));
+      if (!daysByDate.has(date)) daysByDate.set(date, usageBucket({ date }));
+      addBucket(sessionDays.get(date), delta, attributed);
+      addBucket(sessionHours.get(hourKey), delta, attributed);
+      addBucket(daysByDate.get(date), delta, attributed);
+      for (const values of attributed) {
+        addModel(sessionModels, values.model, values);
+        addModel(modelsByName, values.model, values);
+      }
       add(result, delta);
       add(totals, delta);
       if (date === todayDate) { add(result.today, delta); add(today, delta); }
-      if (daysByDate.has(date)) add(daysByDate.get(date), delta);
+      if (hasUsage(delta)) {
+        if (!firstDate || date < firstDate) firstDate = date;
+        if (!lastDate || date > lastDate) lastDate = date;
+      }
     }
-    result.days = [...sessionDays.values()].sort((a, b) => a.date.localeCompare(b.date));
+    result.days = [...sessionDays.values()].map(serializeBucket).sort((a, b) => a.date.localeCompare(b.date));
+    result.hours = [...sessionHours.values()].map(serializeBucket).sort((a, b) => a.date.localeCompare(b.date) || a.hour - b.hour);
+    result.models = modelValues(sessionModels);
     sessions.push(result);
   }
   if (malformedLines) warnings.push(`${malformedLines} token or metadata records could not be parsed.`);
@@ -203,8 +263,9 @@ export function buildSnapshot(records, { now = new Date(), warnings = [], files 
   sessions.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
   return {
     generatedAt: new Date(now).toISOString(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    todayDate, totals, today, days: [...daysByDate.values()], sessions,
-    coverage: { files, sessions: sessions.length, excludedSessions: sessionsById.size - included.size, resets, malformedLines, inheritedEvents, warnings },
+    todayDate, totals, today, models: modelValues(modelsByName),
+    days: [...daysByDate.values()].map(serializeBucket).sort((a, b) => a.date.localeCompare(b.date)), sessions,
+    coverage: { files, sessions: sessions.length, excludedSessions: sessionsById.size - included.size, resets, malformedLines, inheritedEvents, firstDate: firstDate || todayDate, lastDate: lastDate || todayDate, warnings },
   };
 }
 

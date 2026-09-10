@@ -8,7 +8,7 @@
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/style.css">
   <script src="/assets/lucide.min.js" defer></script>
-  <script src="/app.js" defer></script>
+  <script src="/app.js" type="module"></script>
 </head>
 <body>
   <header class="topbar">
@@ -21,25 +21,34 @@
       <div class="actions">
         <span id="updated-at" class="muted update-time">等待数据</span>
         <label class="auto-refresh"><input id="auto-refresh" type="checkbox" checked><span>自动刷新</span></label>
+        <button id="privacy-toggle" class="icon-button" title="开启隐私模式" aria-label="隐私模式" aria-pressed="false"><i data-lucide="eye"></i></button>
+        <button id="pricing-button" class="icon-button" title="费用单价设置" aria-label="费用单价设置"><i data-lucide="sliders-horizontal"></i></button>
         <button id="refresh" class="icon-button" title="立即刷新" aria-label="立即刷新"><i data-lucide="refresh-cw"></i></button>
       </div>
     </section>
     <div id="error" class="notice error" role="alert" hidden></div>
+    <div id="preferences-error" class="notice warning" role="status" hidden></div>
     <div id="loading" class="notice" role="status"><i data-lucide="loader-circle" class="spin"></i>正在读取本地用量记录</div>
+    <form id="range-form" class="range-toolbar">
+      <div class="segmented range-presets" aria-label="统计日期范围"><button type="button" data-range="today" aria-pressed="true">今日</button><button type="button" data-range="7" aria-pressed="false">7 天</button><button type="button" data-range="30" aria-pressed="false">30 天</button><button type="button" data-range="all" aria-pressed="false">累计</button></div>
+      <div class="date-fields"><label><span>开始</span><input id="range-from" type="date" required aria-label="开始日期"></label><span class="date-separator" aria-hidden="true">至</span><label><span>结束</span><input id="range-to" type="date" required aria-label="结束日期"></label><button id="apply-range" class="icon-button" type="submit" title="应用日期范围" aria-label="应用日期范围"><i data-lucide="check"></i></button></div>
+      <span id="range-error" class="field-error" role="alert" hidden></span>
+    </form>
     <section class="metrics" aria-label="用量统计">
-      <div class="metric"><p>今日 Token <i data-lucide="sun"></i></p><strong id="today-total">--</strong><span id="today-split">输入 -- / 输出 --</span></div>
-      <div class="metric"><p>累计 Token <i data-lucide="layers"></i></p><strong id="all-total">--</strong><span id="all-sessions">-- 个本地会话</span></div>
-      <div class="metric"><p>今日缓存命中率 <i data-lucide="database"></i></p><strong id="cache-rate">--</strong><span id="cached-total">-- 缓存输入 Token</span></div>
-      <div class="metric"><p>今日活跃会话 <i data-lucide="messages-square"></i></p><strong id="active-sessions">--</strong><span id="active-split">主会话 -- / 子代理 --</span></div>
+      <div class="metric"><p><span id="range-total-label">今日 Token</span><i data-lucide="chart-no-axes-combined"></i></p><strong id="today-total">--</strong><span id="today-split">输入 -- / 输出 --</span></div>
+      <div class="metric"><p>参考费用 <i data-lucide="calculator"></i></p><strong id="estimated-cost">--</strong><span id="cost-coverage">单价未配置</span></div>
+      <div class="metric"><p>缓存命中率 <i data-lucide="database"></i></p><strong id="cache-rate">--</strong><span id="cached-total">-- 缓存输入 Token</span></div>
+      <div class="metric"><p>活跃会话 <i data-lucide="messages-square"></i></p><strong id="active-sessions">--</strong><span id="active-split">主会话 -- / 子代理 --</span></div>
     </section>
     <section class="charts-section">
       <div class="trend">
-        <div class="section-title"><div><h2>每日用量</h2><p id="trend-total" class="muted">-- Token</p></div><div class="segmented" aria-label="趋势日期范围"><button data-days="7" aria-pressed="true">7 天</button><button data-days="30" aria-pressed="false">30 天</button></div></div>
-        <div class="chart-legend"><span><b class="swatch input"></b>未缓存输入</span><span><b class="swatch cached"></b>缓存输入</span><span><b class="swatch output"></b>输出</span></div>
-        <div class="chart-container"><canvas id="usage-chart" role="img" aria-label="每日 Token 用量柱状图"></canvas><div id="chart-tooltip" class="chart-tooltip" hidden></div></div>
+        <div class="section-title trend-title"><div><h2 id="trend-title">小时用量</h2><p id="trend-total" class="muted">-- Token</p></div><div class="segmented" aria-label="趋势粒度"><button data-chart-mode="hour" aria-pressed="true">小时</button><button data-chart-mode="day" aria-pressed="false">每日</button></div></div>
+        <div class="chart-controls"><label id="hour-date-control" class="hour-date-control"><span>日期</span><input id="hour-date" type="date" aria-label="小时趋势日期"></label><label class="compare-toggle"><input id="compare-enabled" type="checkbox" checked><span id="compare-label">对比前一天</span></label><span id="comparison-status" class="muted"></span></div>
+        <div class="chart-legend"><span><b class="swatch input"></b>未缓存输入</span><span><b class="swatch cached"></b>缓存输入</span><span><b class="swatch output"></b>输出</span><span id="compare-legend"><b class="line-swatch"></b>上一周期</span></div>
+        <div class="chart-container"><canvas id="usage-chart" role="img" aria-label="Token 用量柱状图"></canvas><div id="chart-tooltip" class="chart-tooltip" hidden></div></div>
       </div>
       <div class="breakdown">
-        <div class="section-title"><h2>今日构成</h2><span class="unit">TOKEN</span></div>
+        <div class="section-title"><h2>范围内构成</h2><span class="unit">TOKEN</span></div>
         <div class="composition-bar" id="composition-bar" aria-hidden="true"></div>
         <dl class="breakdown-list">
           <div><dt><b class="swatch input"></b>未缓存输入</dt><dd id="uncached-value">--</dd></div>
@@ -51,20 +60,21 @@
       </div>
     </section>
     <section class="sessions-section">
-      <div class="section-title sessions-title"><div class="title-with-count"><h2>会话明细</h2><span id="session-count" class="count">0</span></div><div class="segmented" aria-label="会话统计范围"><button data-period="today" aria-pressed="true">今日</button><button data-period="all" aria-pressed="false">累计</button></div></div>
+      <div class="section-title sessions-title"><div class="title-with-count"><h2>会话明细</h2><span id="session-count" class="count">0</span></div><span id="selected-range-label" class="muted"></span></div>
       <div class="table-toolbar">
         <label class="search-field"><i data-lucide="search"></i><input id="search" type="search" placeholder="搜索会话、项目或模型" aria-label="搜索会话、项目或模型"></label>
-        <div class="table-actions"><select id="kind-filter" aria-label="会话类型"><option value="all">全部类型</option><option value="main">主会话</option><option value="subagent">子代理</option></select><button id="export" class="icon-button" title="导出当前筛选结果为 CSV" aria-label="导出 CSV"><i data-lucide="download"></i></button></div>
+        <div class="table-actions"><select id="kind-filter" aria-label="会话类型"><option value="all">全部类型</option><option value="main">主会话</option><option value="subagent">子代理</option></select><label class="csv-redact"><input id="csv-redact" type="checkbox" checked><span>导出脱敏</span></label><button id="export" class="icon-button" title="导出当前筛选结果为 CSV" aria-label="导出 CSV"><i data-lucide="download"></i></button></div>
       </div>
       <div id="warning" class="notice warning" hidden></div>
       <div class="table-scroll">
-        <table><thead><tr><th>会话 / 项目</th><th>模型</th><th class="numeric"><button data-sort="input">输入<i data-lucide="chevrons-up-down"></i></button></th><th class="numeric"><button data-sort="cached">缓存输入<i data-lucide="chevrons-up-down"></i></button></th><th class="numeric"><button data-sort="output">输出<i data-lucide="chevrons-up-down"></i></button></th><th class="numeric"><button data-sort="total">合计<i data-lucide="arrow-down"></i></button></th><th class="numeric"><button data-sort="updatedAt">最近活动<i data-lucide="chevrons-up-down"></i></button></th></tr></thead><tbody id="session-rows"></tbody></table>
+        <table><thead><tr><th>会话 / 项目</th><th>模型</th><th class="numeric"><button data-sort="input">输入<i data-lucide="chevrons-up-down"></i></button></th><th class="numeric"><button data-sort="cached">缓存输入<i data-lucide="chevrons-up-down"></i></button></th><th class="numeric"><button data-sort="output">输出<i data-lucide="chevrons-up-down"></i></button></th><th class="numeric"><button data-sort="total">合计<i data-lucide="arrow-down"></i></button></th><th class="numeric"><button data-sort="cost">参考费用<i data-lucide="chevrons-up-down"></i></button></th><th class="numeric"><button data-sort="updatedAt">最近活动<i data-lucide="chevrons-up-down"></i></button></th></tr></thead><tbody id="session-rows"></tbody></table>
         <div id="empty-state" class="empty-state" hidden><i data-lucide="inbox"></i><p>没有匹配的会话</p></div>
       </div>
       <div class="table-footer"><span id="table-summary">--</span><div class="pagination"><button id="prev-page" class="icon-button" title="上一页" aria-label="上一页"><i data-lucide="chevron-left"></i></button><span id="page-label">1 / 1</span><button id="next-page" class="icon-button" title="下一页" aria-label="下一页"><i data-lucide="chevron-right"></i></button></div></div>
     </section>
-    <footer class="page-footer"><span><i data-lucide="hard-drive"></i>本机日志统计</span><span id="timezone">Asia/Shanghai</span></footer>
+    <footer class="page-footer"><span><i data-lucide="hard-drive"></i>本机日志统计</span><span id="all-total">累计 -- Token</span><span id="timezone">Asia/Shanghai</span></footer>
   </main>
   <dialog id="session-dialog"><div class="dialog-heading"><h2>会话详情</h2><button id="close-dialog" class="icon-button" title="关闭" aria-label="关闭详情"><i data-lucide="x"></i></button></div><div id="session-detail"></div></dialog>
+  <dialog id="pricing-dialog"><form id="pricing-form" novalidate><div class="dialog-heading"><h2>费用单价</h2><button id="close-pricing" type="button" class="icon-button" title="取消并关闭" aria-label="关闭费用设置"><i data-lucide="x"></i></button></div><div class="pricing-toolbar"><label>币种 <select id="pricing-currency" aria-label="费用币种"><option value="USD">USD</option><option value="CNY">CNY</option></select></label><span class="muted">每 100 万 Token</span><button id="clear-pricing" type="button" class="icon-button" title="清空当前币种单价" aria-label="清空当前币种单价"><i data-lucide="rotate-ccw"></i></button></div><div class="pricing-head" aria-hidden="true"><span>模型</span><span>未缓存输入</span><span>缓存输入</span><span>输出</span></div><div id="pricing-rows"></div><p id="pricing-empty" class="muted" hidden>暂无可定价模型</p><p class="pricing-note">自定义单价估算，不是实际账单。空白模型不计价。</p><div id="pricing-error" class="field-error" role="alert" hidden></div><div class="dialog-actions"><button id="cancel-pricing" type="button" class="text-button">取消</button><button type="submit" class="text-button primary"><i data-lucide="check"></i>保存</button></div></form></dialog>
 </body>
 </html>
