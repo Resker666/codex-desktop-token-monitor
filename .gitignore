@@ -1,0 +1,27 @@
+# Dependencies and generated output
+node_modules/
+coverage/
+dist/
+*.log
+*.pid
+*.tmp
+
+# Local configuration and usage data
+.env
+.env.*
+!.env.example
+.codex/
+sessions/
+archived_sessions/
+*.jsonl
+*.csv
+exports/
+screenshots/
+work/
+
+# Editor and operating system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini

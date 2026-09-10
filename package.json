@@ -1,0 +1,13 @@
+{
+  "name": "codex-desktop-token-monitor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local token usage dashboard for Codex Desktop session logs.",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server.mjs",
+    "start:open": "node server.mjs --open",
+    "test": "node --test"
+  }
+}
