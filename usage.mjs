@@ -5,6 +5,7 @@ import { StringDecoder } from 'node:string_decoder';
 
 export const COUNTERS = ['input', 'cached', 'cacheWrite', 'output', 'reasoning', 'total'];
 const FIELDS = ['input_tokens', 'cached_input_tokens', 'cache_write_input_tokens', 'output_tokens', 'reasoning_output_tokens', 'total_tokens'];
+const DESKTOP_ORIGINATORS = new Set(['Codex Desktop', 'codex_work_desktop']);
 export const emptyCounters = () => Object.fromEntries(COUNTERS.map(key => [key, 0]));
 const add = (target, values) => { for (const key of COUNTERS) target[key] += values[key]; };
 const equal = (a, b) => a && b && COUNTERS.every(key => a[key] === b[key]);
@@ -148,7 +149,8 @@ export function buildSnapshot(records, { now = new Date(), warnings = [], files 
     }
   }
 
-  const included = new Set([...sessionsById.values()].filter(session => session.originator === 'Codex Desktop').map(session => session.id));
+  const desktopSessions = [...sessionsById.values()].filter(session => DESKTOP_ORIGINATORS.has(session.originator));
+  const included = new Set(desktopSessions.map(session => session.id));
   let changed;
   do {
     changed = false;
@@ -159,6 +161,8 @@ export function buildSnapshot(records, { now = new Date(), warnings = [], files 
       }
     }
   } while (changed);
+  const unsupportedDesktopSessions = [...sessionsById.values()].filter(session =>
+    !included.has(session.id) && /desktop/i.test(session.originator));
 
   const todayDate = localDate(now);
   const totals = emptyCounters();
@@ -260,6 +264,10 @@ export function buildSnapshot(records, { now = new Date(), warnings = [], files 
   if (malformedLines) warnings.push(`${malformedLines} token or metadata records could not be parsed.`);
   if (incompleteResets) warnings.push(`${incompleteResets} counter resets lacked request usage; their reset event was excluded.`);
   if (ambiguousForks) warnings.push(`${ambiguousForks} forks lacked inherited baselines; only known request usage was counted at their first event.`);
+  if (unsupportedDesktopSessions.length) {
+    const originators = [...new Set(unsupportedDesktopSessions.map(session => session.originator))].sort().join(', ');
+    warnings.push(`${unsupportedDesktopSessions.length} session(s) used an unsupported Desktop originator (${originators}) and were excluded.`);
+  }
   sessions.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
   return {
     generatedAt: new Date(now).toISOString(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,

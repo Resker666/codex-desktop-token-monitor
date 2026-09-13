@@ -147,6 +147,40 @@ test('includes descendants of desktop sessions but excludes unrelated CLI sessio
   assert.equal(result.coverage.excludedSessions, 1);
 });
 
+test('includes current Codex Desktop originator and its descendants', () => {
+  const rows = [
+    parser([meta('desktop', { originator: 'codex_work_desktop' }), event('2026-09-10T02:00:00Z', usage(100))]),
+    parser([meta('child', { originator: 'codex_work_desktop', parent_thread_id: 'desktop', thread_source: 'subagent' }), event('2026-09-10T02:01:00Z', usage(30))]),
+  ];
+  const result = snapshot(rows);
+  assert.equal(result.totals.total, 150);
+  assert.equal(result.sessions.length, 2);
+  assert.equal(result.coverage.excludedSessions, 0);
+});
+
+test('warns when a desktop-like originator is not supported', () => {
+  const result = snapshot([parser([
+    meta('future-desktop', { originator: 'codex_next_desktop' }),
+    event('2026-09-10T02:00:00Z', usage(100)),
+  ])]);
+  assert.equal(result.totals.total, 0);
+  assert.equal(result.coverage.excludedSessions, 1);
+  assert.match(result.coverage.warnings.join(' '), /unsupported Desktop originator/i);
+});
+
+test('does not warn for an unsupported desktop-like descendant that was included', () => {
+  const result = snapshot([
+    parser([meta('desktop'), event('2026-09-10T02:00:00Z', usage(100))]),
+    parser([
+      meta('child', { originator: 'codex_next_desktop', parent_thread_id: 'desktop', thread_source: 'subagent' }),
+      event('2026-09-10T02:01:00Z', usage(30)),
+    ]),
+  ]);
+  assert.equal(result.totals.total, 150);
+  assert.equal(result.coverage.excludedSessions, 0);
+  assert.doesNotMatch(result.coverage.warnings.join(' '), /unsupported Desktop originator/i);
+});
+
 test('ignores null info and waits for full appended UTF-8 JSONL records', () => {
   const result = new JsonlAccumulator();
   const metadataBytes = Buffer.from(JSON.stringify(meta('desktop', { cwd: 'C:/projects/\u4e2d\u6587' })) + '\n');

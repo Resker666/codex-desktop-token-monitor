@@ -80,7 +80,7 @@ test('local server serves synthetic usage and rejects unsafe requests', { timeou
     const timestamp = new Date().toISOString();
     const counters = { input_tokens: 100, cached_input_tokens: 40, output_tokens: 20, reasoning_output_tokens: 5, total_tokens: 120 };
     const rows = [
-      { type: 'session_meta', timestamp, payload: { id: 'synthetic-desktop', originator: 'Codex Desktop', timestamp } },
+      { type: 'session_meta', timestamp, payload: { id: 'synthetic-desktop', originator: 'codex_work_desktop', timestamp } },
       { type: 'event_msg', timestamp, payload: { type: 'token_count', info: { total_token_usage: counters, last_token_usage: counters } } },
     ];
     const contents = rows.map(row => JSON.stringify(row)).join('\n') + '\n';
