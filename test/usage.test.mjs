@@ -158,14 +158,27 @@ test('includes current Codex Desktop originator and its descendants', () => {
   assert.equal(result.coverage.excludedSessions, 0);
 });
 
-test('warns when a desktop-like originator is not supported', () => {
+test('includes Codex VS Code sessions on Linux and their descendants', () => {
+  const rows = [
+    parser([meta('vscode', { originator: 'codex_vscode', source: 'vscode', thread_source: 'user', cwd: '/home/daq/project' }), event('2026-09-10T02:00:00Z', usage(100))]),
+    parser([meta('child', { originator: 'codex_cli_rs', parent_thread_id: 'vscode', thread_source: 'subagent' }), event('2026-09-10T02:01:00Z', usage(30))]),
+    parser([meta('cli', { originator: 'codex_cli_rs' }), event('2026-09-10T02:02:00Z', usage(999))]),
+  ];
+  const result = snapshot(rows);
+  assert.equal(result.totals.total, 150);
+  assert.deepEqual(result.sessions.map(session => session.id).sort(), ['child', 'vscode']);
+  assert.equal(result.coverage.excludedSessions, 1);
+  assert.doesNotMatch(result.coverage.warnings.join(' '), /unsupported interactive originator/i);
+});
+
+test('warns when an interactive originator is not supported', () => {
   const result = snapshot([parser([
     meta('future-desktop', { originator: 'codex_next_desktop' }),
     event('2026-09-10T02:00:00Z', usage(100)),
   ])]);
   assert.equal(result.totals.total, 0);
   assert.equal(result.coverage.excludedSessions, 1);
-  assert.match(result.coverage.warnings.join(' '), /unsupported Desktop originator/i);
+  assert.match(result.coverage.warnings.join(' '), /unsupported interactive originator/i);
 });
 
 test('does not warn for an unsupported desktop-like descendant that was included', () => {
@@ -178,7 +191,7 @@ test('does not warn for an unsupported desktop-like descendant that was included
   ]);
   assert.equal(result.totals.total, 150);
   assert.equal(result.coverage.excludedSessions, 0);
-  assert.doesNotMatch(result.coverage.warnings.join(' '), /unsupported Desktop originator/i);
+  assert.doesNotMatch(result.coverage.warnings.join(' '), /unsupported interactive originator/i);
 });
 
 test('ignores null info and waits for full appended UTF-8 JSONL records', () => {

@@ -5,7 +5,7 @@ import { StringDecoder } from 'node:string_decoder';
 
 export const COUNTERS = ['input', 'cached', 'cacheWrite', 'output', 'reasoning', 'total'];
 const FIELDS = ['input_tokens', 'cached_input_tokens', 'cache_write_input_tokens', 'output_tokens', 'reasoning_output_tokens', 'total_tokens'];
-const DESKTOP_ORIGINATORS = new Set(['Codex Desktop', 'codex_work_desktop']);
+const SUPPORTED_ORIGINATORS = new Set(['Codex Desktop', 'codex_work_desktop', 'codex_vscode']);
 export const emptyCounters = () => Object.fromEntries(COUNTERS.map(key => [key, 0]));
 const add = (target, values) => { for (const key of COUNTERS) target[key] += values[key]; };
 const equal = (a, b) => a && b && COUNTERS.every(key => a[key] === b[key]);
@@ -149,8 +149,8 @@ export function buildSnapshot(records, { now = new Date(), warnings = [], files 
     }
   }
 
-  const desktopSessions = [...sessionsById.values()].filter(session => DESKTOP_ORIGINATORS.has(session.originator));
-  const included = new Set(desktopSessions.map(session => session.id));
+  const supportedSessions = [...sessionsById.values()].filter(session => SUPPORTED_ORIGINATORS.has(session.originator));
+  const included = new Set(supportedSessions.map(session => session.id));
   let changed;
   do {
     changed = false;
@@ -161,8 +161,8 @@ export function buildSnapshot(records, { now = new Date(), warnings = [], files 
       }
     }
   } while (changed);
-  const unsupportedDesktopSessions = [...sessionsById.values()].filter(session =>
-    !included.has(session.id) && /desktop/i.test(session.originator));
+  const unsupportedInteractiveSessions = [...sessionsById.values()].filter(session =>
+    !included.has(session.id) && /(desktop|vscode)/i.test(session.originator));
 
   const todayDate = localDate(now);
   const totals = emptyCounters();
@@ -264,9 +264,9 @@ export function buildSnapshot(records, { now = new Date(), warnings = [], files 
   if (malformedLines) warnings.push(`${malformedLines} token or metadata records could not be parsed.`);
   if (incompleteResets) warnings.push(`${incompleteResets} counter resets lacked request usage; their reset event was excluded.`);
   if (ambiguousForks) warnings.push(`${ambiguousForks} forks lacked inherited baselines; only known request usage was counted at their first event.`);
-  if (unsupportedDesktopSessions.length) {
-    const originators = [...new Set(unsupportedDesktopSessions.map(session => session.originator))].sort().join(', ');
-    warnings.push(`${unsupportedDesktopSessions.length} session(s) used an unsupported Desktop originator (${originators}) and were excluded.`);
+  if (unsupportedInteractiveSessions.length) {
+    const originators = [...new Set(unsupportedInteractiveSessions.map(session => session.originator))].sort().join(', ');
+    warnings.push(`${unsupportedInteractiveSessions.length} session(s) used an unsupported interactive originator (${originators}) and were excluded.`);
   }
   sessions.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
   return {

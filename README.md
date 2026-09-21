@@ -1,14 +1,14 @@
-# Codex Desktop Token Monitor
+# Codex Token Monitor
 
-Codex 桌面端本地 Token 用量监控面板。读取本机 JSONL 会话日志，展示日期区间内的用量、小时趋势、缓存命中率、会话及子代理明细，并支持隐私模式和自定义模型费用估算。
+Codex 本地 Token 用量监控面板，支持 Windows 桌面端以及 Ubuntu 上通过 VS Code Remote SSH 运行的 Codex IDE 扩展。读取本机 JSONL 会话日志，展示日期区间内的用量、小时趋势、缓存命中率、会话及子代理明细，并支持隐私模式和自定义模型费用估算。
 
 无需 API Key，无 npm 运行依赖，无外部 CDN。监控程序本身不调用模型，也不消耗模型 Token。它是独立的本地工具，不是 OpenAI 官方账单系统。
 
 ## 环境要求
 
 - Node.js 20 或更新版本。
-- 本机保留了 Codex Desktop 会话日志。
-- Windows 可使用附带的双击启动和停止脚本。其他系统可以通过 Node.js 命令启动；目前已在 Windows 上验证。
+- 本机保留了 Codex 会话日志，默认位于 `$CODEX_HOME/sessions` 和 `$CODEX_HOME/archived_sessions`。
+- 支持 Windows Codex Desktop，以及 Ubuntu 上通过 VS Code Remote SSH 使用的 Codex IDE 扩展。
 
 ## 快速开始
 
@@ -27,6 +27,32 @@ npm run start:open
 也可以直接运行 `node server.mjs --open`。无需先执行 `npm install`。
 
 Windows 用户可双击 `start.cmd`。如果默认端口已经运行本工具，会直接打开现有面板。服务仅监听 `127.0.0.1`；默认端口被其他程序占用时，会自动尝试接下来的 30 个端口，以终端显示的地址为准。
+### Ubuntu / VS Code Remote SSH
+
+Codex IDE 扩展运行在 Ubuntu 的远程扩展主机时，会把会话写入 Ubuntu 用户的 `$CODEX_HOME`，默认是 `~/.codex`。远程终端中没有 `code` 命令不影响监控。
+
+Ubuntu 需要先安装 Node.js 20 或更新版本。确认版本后，在 Ubuntu 上执行：
+
+```sh
+node --version
+git clone https://github.com/Resker666/codex-desktop-token-monitor.git
+cd codex-desktop-token-monitor
+npm test
+sh ./start.sh
+```
+
+Ubuntu 本机浏览器打开 `http://127.0.0.1:4318`。
+
+在 Windows VS Code 的 Remote SSH 窗口中，可在“端口”面板转发远程端口 `4318`。如果 Windows 本机的监控器已经占用 `4318`，把本地转发端口设为 `4319`，然后打开 `http://127.0.0.1:4319`。
+
+也可以在 Windows 终端手动建立 SSH 隧道：
+
+```sh
+ssh -N -L 4319:127.0.0.1:4318 daq@<ubuntu-host>
+```
+
+服务始终只监听 Ubuntu 的 `127.0.0.1`。无需也不建议改为 `0.0.0.0`；本机浏览器和 SSH 转发可以同时使用。
+
 
 ## 停止服务
 
@@ -59,7 +85,13 @@ $env:CODEX_HOME = 'D:\local-data\codex'
 node server.mjs --port=4320
 ```
 
-Windows 双击启动脚本优先检查默认端口。使用自定义目录或端口时，直接运行 Node.js 命令。
+Ubuntu 中的等价写法：
+
+```sh
+CODEX_HOME=/home/daq/.codex sh ./start.sh --port=4320
+```
+
+Windows 双击启动脚本优先检查默认端口。使用自定义目录或端口时，直接运行 Node.js 命令或 `start.sh`。
 
 ## 功能
 
@@ -96,7 +128,7 @@ USD 和 CNY 使用独立单价表，切换币种只切换单价表，不进行�
 
 ## 统计口径
 
-1. 通过 `session_meta` 识别桌面端会话及其子代理，兼容 `Codex Desktop` 和 `codex_work_desktop` 来源标识，并读取 `event_msg` 中的 `token_count` 记录。
+1. 通过 `session_meta` 识别交互式 Codex 会话及其子代理，兼容 Windows 的 `Codex Desktop`、`codex_work_desktop`，以及 Ubuntu VS Code 扩展的 `codex_vscode` 来源标识，并读取 `event_msg` 中的 `token_count` 记录。
 2. 用累计计数的变化量统计新增用量，跳过重复快照。按事件的本机日期和小时归入统计；首次累计快照无法还原的较早用量仍归入首次观察到它的事件时间。
 3. 缓存输入已包含在输入 Token 中，推理输出已包含在输出 Token 中。总量不再重复加入这两项。
 4. 归档副本按会话身份去重；子代理继承的历史记录不再次计入。子代理独立列出，不同时加进父会话一行。
@@ -112,7 +144,7 @@ USD 和 CNY 使用独立单价表，切换币种只切换单价表，不进行�
 - 会话模型列根据所选日期范围内的逐事件模型用量显示；包含多个模型时显示“多模型 (N)”。无法归属的用量仍保留为未知模型，费用参考不会把这些用量计入最后一个模型。
 - 日志计数重置或分支继承信息不完整时，只计入能够归属的用量，异常会显示在面板中。
 - JSONL 是本地日志格式，可能随 Codex 版本变化；出现新格式时解析器可能需要适配。
-- 如果日志使用了名称中含 `desktop`、但监控器尚未支持的来源标识，面板会显示读取提示，并将相应会话列为已排除，避免静默显示为零用量。
+- 如果日志使用了名称中含 `desktop` 或 `vscode`、但监控器尚未支持的来源标识，面板会显示读取提示，并将相应会话列为已排除，避免静默显示为零用量。
 
 工具只读取日志，不修改 Codex 配置、认证或会话文件。网页静态资源均在仓库中，模型单价和隐私偏好只保存在浏览器本地。
 
@@ -135,6 +167,7 @@ codex-desktop-token-monitor/
   .github/workflows/test.yml  GitHub Actions
   start.cmd / start.ps1       Windows 启动入口
   stop.cmd / stop.ps1         Windows 停止入口
+  start.sh                     Linux / macOS 启动入口
 ```
 
 ## 发布说明
