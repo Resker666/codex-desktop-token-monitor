@@ -27,32 +27,88 @@ npm run start:open
 也可以直接运行 `node server.mjs --open`。无需先执行 `npm install`。
 
 Windows 用户可双击 `start.cmd`。如果默认端口已经运行本工具，会直接打开现有面板。服务仅监听 `127.0.0.1`；默认端口被其他程序占用时，会自动尝试接下来的 30 个端口，以终端显示的地址为准。
+
 ### Ubuntu / VS Code Remote SSH
 
-Codex IDE 扩展运行在 Ubuntu 的远程扩展主机时，会把会话写入 Ubuntu 用户的 `$CODEX_HOME`，默认是 `~/.codex`。远程终端中没有 `code` 命令不影响监控。
+Codex IDE 扩展运行在 Ubuntu 的远程扩展主机时，会把会话写入 Ubuntu 用户的 `$CODEX_HOME`，默认是 `~/.codex`。远程终端中没有 `code` 命令不影响监控；只要 `sessions` 中存在 `originator: "codex_vscode"` 的日志即可。
 
-Ubuntu 需要先安装 Node.js 20 或更新版本。确认版本后，在 Ubuntu 上执行：
+#### 1. 安装 Node.js
+
+项目要求 Node.js 20 或更新版本，推荐 Node.js 24 LTS。Ubuntu 22.04 默认软件源可能仍提供 Node.js 12，单独执行 `apt upgrade` 不会跨越到新主版本。可添加 NodeSource 软件源：
 
 ```sh
+sudo apt update
+sudo apt install -y curl ca-certificates
+curl -fsSL https://deb.nodesource.com/setup_24.x -o /tmp/nodesource_setup.sh
+sudo -E bash /tmp/nodesource_setup.sh
+sudo apt install -y nodejs
+
 node --version
+npm --version
+```
+
+如果安装时提示 `libnode-dev 12.x` 正在占用 `/usr/include/node/common.gypi`，先移除旧开发包并修复依赖，再重新安装：
+
+```sh
+sudo apt remove -y libnode-dev
+sudo apt --fix-broken install -y
+sudo apt install -y nodejs
+```
+
+#### 2. 下载并启动监控器
+
+首次安装：
+
+```sh
 git clone https://github.com/Resker666/codex-desktop-token-monitor.git
 cd codex-desktop-token-monitor
 npm test
-sh ./start.sh
+./start.sh
 ```
 
-Ubuntu 本机浏览器打开 `http://127.0.0.1:4318`。
+如果脚本没有执行权限，也可以运行 `sh ./start.sh`。项目没有第三方 npm 运行依赖，不需要先执行 `npm install`。
 
-在 Windows VS Code 的 Remote SSH 窗口中，可在“端口”面板转发远程端口 `4318`。如果 Windows 本机的监控器已经占用 `4318`，把本地转发端口设为 `4319`，然后打开 `http://127.0.0.1:4319`。
-
-也可以在 Windows 终端手动建立 SSH 隧道：
+已有仓库更新到最新版：
 
 ```sh
-ssh -N -L 4319:127.0.0.1:4318 daq@<ubuntu-host>
+cd ~/develop/github/codex-desktop-token-monitor
+git pull --ff-only origin main
+npm test
+./start.sh
 ```
 
-服务始终只监听 Ubuntu 的 `127.0.0.1`。无需也不建议改为 `0.0.0.0`；本机浏览器和 SSH 转发可以同时使用。
+服务启动后可验证：
 
+```sh
+curl http://127.0.0.1:4318/api/health
+```
+
+Ubuntu 本机浏览器打开 `http://127.0.0.1:4318`。保持启动终端运行；按 `Ctrl+C` 停止服务。
+
+#### 3. 从 Windows 查看 Ubuntu 用量
+
+使用 VS Code Remote SSH 时：
+
+1. 在远程 VS Code 窗口底部打开“端口 / Ports”面板。
+2. 添加并转发 Ubuntu 远程端口 `4318`。
+3. 如果 Windows 本机监控器已占用本地 `4318`，把转发后的本地端口改为 `4319`。
+4. Windows 浏览器打开 `http://127.0.0.1:4319`。
+
+也可以在 Windows Terminal 或 Git Bash 中手动建立 SSH 隧道：
+
+```sh
+ssh -N -L 4319:127.0.0.1:4318 <ubuntu-ssh-host-or-alias>
+```
+
+保持该 SSH 命令运行，再访问 `http://127.0.0.1:4319`。关闭隧道只会中断 Windows 访问，不会停止 Ubuntu 上的监控进程。
+
+| 浏览器地址 | 数据来源 |
+| --- | --- |
+| Ubuntu `http://127.0.0.1:4318` | Ubuntu VS Code Codex 日志 |
+| Windows `http://127.0.0.1:4318` | Windows Codex Desktop 日志 |
+| Windows `http://127.0.0.1:4319` | 通过隧道访问 Ubuntu Codex 日志 |
+
+服务始终只监听 Ubuntu 的 `127.0.0.1`。本机浏览器和 SSH 转发可以同时使用，无需也不建议改为 `0.0.0.0` 或开放防火墙端口。
 
 ## 停止服务
 
